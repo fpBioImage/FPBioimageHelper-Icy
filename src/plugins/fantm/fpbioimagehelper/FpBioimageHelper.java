@@ -5,20 +5,11 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URL;
-import java.nio.file.CopyOption;
-import java.nio.file.FileSystem;
-import java.nio.file.FileSystems;
-import java.nio.file.FileVisitResult;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
@@ -31,7 +22,6 @@ import icy.file.Saver;
 import icy.gui.dialog.ConfirmDialog;
 import icy.gui.dialog.MessageDialog;
 import icy.image.IcyBufferedImage;
-import icy.image.lut.LUT;
 import icy.sequence.DimensionId;
 import icy.sequence.Sequence;
 import icy.sequence.SequenceUtil;
@@ -99,7 +89,6 @@ public class FpBioimageHelper extends EzPlug {
         seqVar.addVarChangeListener(new EzVarListener<Sequence>(){
 			@Override
 			public void variableChanged(EzVar<Sequence> source, Sequence newSeq) {
-				// TODO Auto-generated method stub
 				if (newSeq != null) {
 			        voxelSizeXVar.setValue(newSeq.getPixelSizeX());
 			        voxelSizeYVar.setValue(newSeq.getPixelSizeY());
@@ -214,6 +203,8 @@ public class FpBioimageHelper extends EzPlug {
         }
         
         // Save image as PNG stack
+        
+        // Check the shape
         if (seq.getSizeZ() == 1 && seq.getSizeT() > 1){
         	Boolean dlg = ConfirmDialog.confirm("Swap Z & T", "Image appears to only have 1 z-slice. Would you like to swap Z and T dimensions?");
         	if (dlg)
@@ -223,17 +214,13 @@ public class FpBioimageHelper extends EzPlug {
         	
         }
         
-        //SequenceUtil.
-        //if (seq.getDataType() != BufferedImage.TYPE_INT_ARGB && seq.getDataType() != BufferedImage.TYPE_INT_RGB){
-        //	LUT lut = seq.getUserLUT();
-        //	seq = SequenceUtil.convertColor(seq, BufferedImage.TYPE_INT_ARGB, lut);
-        //}
-        //seq = SequenceUtil.toARGB(seq);
+        // Use the right format for PNG
         seq = SequenceUtil.convertColor(seq,  BufferedImage.TYPE_INT_ARGB, seq.getFirstViewer().getLut());  
         
         Sequence saveMe = SequenceUtil.extractFrame(seq, timeSlice.getValue());
         //saveMe = SequenceUtil.convertToType(saveMe, DataType.UBYTE, true);
         
+        // Check it exists
         if (saveMe==null){
         	System.out.println("Selected frame does not exist for this sequence: using frame 0.");
         	saveMe = SequenceUtil.extractFrame(seq, 0);
@@ -266,9 +253,7 @@ public class FpBioimageHelper extends EzPlug {
         try {
         	fppath = new File(fppath).getCanonicalPath();
         	savepath = new File(savepath).getCanonicalPath();
-        	
-			//System.out.println(new File(fppath).getCanonicalPath());
-		} catch (IOException e2) {
+    	} catch (IOException e2) {
 			e2.printStackTrace();
 		}
         
@@ -320,7 +305,7 @@ public class FpBioimageHelper extends EzPlug {
     			String runMe = "open \"/Applications/Google Chrome.app\" --allow-file-access-from-files \"" + htmlSavePath + "\"";
     			Runtime rt = Runtime.getRuntime();
     			try {
-					Process pr = rt.exec(runMe);
+					Process pr = rt.exec(runMe); // should check return value
 				} catch (IOException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
