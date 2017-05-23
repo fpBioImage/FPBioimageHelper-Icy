@@ -17,10 +17,12 @@ import javax.swing.JFileChooser;
 
 import org.apache.commons.lang.SystemUtils;
 
+import icy.canvas.IcyCanvas;
 import icy.file.FileUtil;
 import icy.file.Saver;
 import icy.gui.dialog.ConfirmDialog;
 import icy.gui.dialog.MessageDialog;
+import icy.gui.viewer.Viewer;
 import icy.image.IcyBufferedImage;
 import icy.sequence.DimensionId;
 import icy.sequence.Sequence;
@@ -63,7 +65,7 @@ public class FpBioimageHelper extends EzPlug {
         addEzComponent(uniqueNameVar);
         final EzGroup voxelRatioGroup = new EzGroup("Voxel Ratio (before scaling)", voxelSizeXVar, voxelSizeYVar, voxelSizeZVar);
         addEzComponent(voxelRatioGroup);
-        final EzGroup scaleGroup = new EzGroup("Scale", scaleXVar, scaleYVar, scaleZVar);
+        final EzGroup scaleGroup = new EzGroup("Scaling (<1 to reduce file size)", scaleXVar, scaleYVar, scaleZVar);
         addEzComponent(scaleGroup);
         addEzComponent(installedVar);
 		
@@ -180,16 +182,19 @@ public class FpBioimageHelper extends EzPlug {
         	}
         	
         	String installFromPath = "/plugins/fantm/fpbioimagehelper/FPBioimage/";
-        	String[] installFromNames = new String[9];
-        	installFromNames[0] = "FPBioimage.datagz";
-        	installFromNames[1] = "FPBioimage.jsgz";
-        	installFromNames[2] = "FPBioimage.memgz";
-        	installFromNames[3] = "FPBioimageLoader.js";
-        	installFromNames[4] = "fullbar.png";
-        	installFromNames[5] = "loadingbar.png";
-        	installFromNames[6] = "Progress.js";
-        	installFromNames[7] = "progresslogo.png";
-        	installFromNames[8] = "UnityLoader.js";
+        	String[] installFromNames = new String[12];
+        	installFromNames[0] = "download.js";
+        	installFromNames[1] = "empty.png";
+        	installFromNames[2] = "FPBioimage.asm.code.unityweb";
+        	installFromNames[3] = "FPBioimage.asm.framework.unityweb";
+        	installFromNames[4] = "FPBioimage.asm.memory.unityweb";
+        	installFromNames[5] = "FPBioimage.data.unityweb";
+        	installFromNames[6] = "FPBioimage.json";
+        	installFromNames[7] = "FPLoader.js";
+        	installFromNames[8] = "FPProgress.js";
+        	installFromNames[9] = "full.png";
+        	installFromNames[10] = "logo.png";
+        	installFromNames[11] = "UnityLoader.js";
         	
         	for (int i=0; i<installFromNames.length; i++){
         		try {
@@ -203,6 +208,9 @@ public class FpBioimageHelper extends EzPlug {
         }
         
         // Save image as PNG stack
+        
+        Viewer view = seq.getFirstViewer();
+        view.setCanvas("plugins.kernel.canvas.Canvas2DPlugin");
         
         // Check the shape
         if (seq.getSizeZ() == 1 && seq.getSizeT() > 1){
@@ -239,7 +247,7 @@ public class FpBioimageHelper extends EzPlug {
         
         // And now just make the webpage! 
         String pathTohtmlFile = "/templateWebpage.html";
-        int numLines = 60;
+        int numLines = 46; // Not great practice to hard-code this! 
         String[] webpageAsString = new String[numLines];
         
         try {
