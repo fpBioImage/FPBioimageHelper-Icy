@@ -1,6 +1,6 @@
 package plugins.fantm.fpbioimagehelper;
 
-import java.awt.image.BufferedImage;
+// Java system imports
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
@@ -10,20 +10,38 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
+import java.util.regex.Pattern;
 
 import javax.swing.JFileChooser;
+import javax.swing.JOptionPane;
 
-import org.apache.commons.lang.SystemUtils;
+import org.jets3t.service.S3Service;
+import org.jets3t.service.S3ServiceException;
+import org.jets3t.service.ServiceException;
+import org.jets3t.service.acl.AccessControlList;
+import org.jets3t.service.acl.GroupGrantee;
+import org.jets3t.service.acl.Permission;
+import org.jets3t.service.model.S3Object;
 
-import icy.canvas.IcyCanvas;
+// Java awt imaging imports
+import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferInt;
 import icy.file.FileUtil;
 import icy.file.Saver;
 import icy.gui.dialog.ConfirmDialog;
 import icy.gui.dialog.MessageDialog;
+import icy.gui.frame.progress.ProgressFrame;
 import icy.gui.viewer.Viewer;
 import icy.image.IcyBufferedImage;
+import icy.image.IcyBufferedImageUtil;
+import icy.image.lut.LUT;
+import icy.math.Scaler;
 import icy.sequence.DimensionId;
 import icy.sequence.Sequence;
 import icy.sequence.SequenceUtil;
@@ -38,8 +56,9 @@ import plugins.adufour.ezplug.EzVarSequence;
 import plugins.adufour.ezplug.EzVarText;
 
 public class FpBioimageHelper extends EzPlug {
-
+	
     // Variables
+	public static String bucketName = "fpbhost";
     EzVarSequence seqVar = new EzVarSequence("Sequence");
     
     EzVarDimensionPicker timeSlice = new EzVarDimensionPicker("Time point", DimensionId.T, seqVar);
@@ -49,12 +68,12 @@ public class FpBioimageHelper extends EzPlug {
     EzVarDouble voxelSizeZVar = new EzVarDouble("Voxel size z", 0, 0, 10000, 1);
     
     EzVarText uniqueNameVar = new EzVarText("Unique Name", "", 1);
-    
-    EzVarBoolean installedVar = new EzVarBoolean("FPBioimage already on server?", true);
-    
+        
     EzVarDouble scaleXVar = new EzVarDouble("X-scale", 1.0, 0, 100, 0.25);
     EzVarDouble scaleYVar = new EzVarDouble("Y-scale", 1.0, 0, 100, 0.25);
     EzVarDouble scaleZVar = new EzVarDouble("Z-scale", 1.0, 0, 100, 0.25);
+    
+    EzVarBoolean uploadToAWSVar = new EzVarBoolean("Upload to FPB Host?", false);
     
     
 	@Override
@@ -67,7 +86,7 @@ public class FpBioimageHelper extends EzPlug {
         addEzComponent(voxelRatioGroup);
         final EzGroup scaleGroup = new EzGroup("Scaling (<1 to reduce file size)", scaleXVar, scaleYVar, scaleZVar);
         addEzComponent(scaleGroup);
-        addEzComponent(installedVar);
+        addEzComponent(uploadToAWSVar);
 		
         // Set pixel size and unique name from image
         Sequence seq = seqVar.getValue();
@@ -154,61 +173,15 @@ public class FpBioimageHelper extends EzPlug {
 		}
 		
 		String uniqueName = uniqueNameVar.getValue();
+		uniqueName = validateName(uniqueName);
 		
         // Choose folder for saving
-		String savepath = DirectoryChooser("fpsavepath", "Choose a folder for the webpage and image data"); // maybe this should actually be an html file, not a directory. 
+		String savepath = DirectoryChooser("fpsavepath", "Choose a folder to save webpage and image data"); // maybe this should actually be an html file, not a directory. 
 		if (savepath == null) return;
-        
+        savepath = savepath + "/" + uniqueName;
         getPreferencesRoot().put("fpsavepath", FileUtil.getDirectory(savepath));
         
-        // Choose location of current FPBioimage installation
-		String fppath;
-        if (installedVar.getValue()){
-            fppath = DirectoryChooser("fpinstallpath", "Please select your current FPBioimage installation folder");
-            if (fppath == null) return;
-            
-        } else {
-        	// Install FPBioimage
-        	fppath = savepath + "/../FPBioimage/";
-        	
-        	try{
-        		boolean success = new File(fppath).mkdir();
-        	
-        		if (!success){
-        			throw new Exception("Could not create a directory at " + fppath);
-        		}
-        	}catch (Exception ex){
-        		ex.printStackTrace();
-        	}
-        	
-        	String installFromPath = "/plugins/fantm/fpbioimagehelper/FPBioimage/";
-        	String[] installFromNames = new String[12];
-        	installFromNames[0] = "download.js";
-        	installFromNames[1] = "empty.png";
-        	installFromNames[2] = "FPBioimage.asm.code.unityweb";
-        	installFromNames[3] = "FPBioimage.asm.framework.unityweb";
-        	installFromNames[4] = "FPBioimage.asm.memory.unityweb";
-        	installFromNames[5] = "FPBioimage.data.unityweb";
-        	installFromNames[6] = "FPBioimage.json";
-        	installFromNames[7] = "FPLoader.js";
-        	installFromNames[8] = "FPProgress.js";
-        	installFromNames[9] = "full.png";
-        	installFromNames[10] = "logo.png";
-        	installFromNames[11] = "UnityLoader.js";
-        	
-        	for (int i=0; i<installFromNames.length; i++){
-        		try {
-					ExportResource(installFromPath + installFromNames[i], fppath + installFromNames[i]);
-				} catch (Exception e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
-        	}
-        	
-        }
-        
         // Save image as PNG stack
-        
         Viewer view = seq.getFirstViewer();
         view.setCanvas("plugins.kernel.canvas.Canvas2DPlugin");
         
@@ -222,32 +195,115 @@ public class FpBioimageHelper extends EzPlug {
         	
         }
         
-        // Use the right format for PNG
-        seq = SequenceUtil.convertColor(seq,  BufferedImage.TYPE_INT_ARGB, seq.getFirstViewer().getLut());  
-        
-        Sequence saveMe = SequenceUtil.extractFrame(seq, timeSlice.getValue());
-        //saveMe = SequenceUtil.convertToType(saveMe, DataType.UBYTE, true);
-        
+        // Get time slice
+        Sequence sliceArray = SequenceUtil.extractFrame(seq, timeSlice.getValue());
+                
         // Check it exists
-        if (saveMe==null){
+        if (sliceArray==null){
         	System.out.println("Selected frame does not exist for this sequence: using frame 0.");
-        	saveMe = SequenceUtil.extractFrame(seq, 0);
+        	sliceArray = SequenceUtil.extractFrame(seq, 0);
         }
         
-        saveMe = SequenceUtil.scale(saveMe, (int) Math.round((double) saveMe.getSizeX() * scaleXVar.getValue()), (int) Math.round((double) saveMe.getSizeY() * scaleYVar.getValue()));
+        // Start progress bar here!
+        ProgressFrame prog = new ProgressFrame("Converting colorspace...");
+        prog.setLength(1.0);
+        prog.setPosition(0.1);
         
+        // Convert to the right color
+        sliceArray = SequenceUtil.convertColor(sliceArray, BufferedImage.TYPE_INT_ARGB, seq.getFirstViewer().getLut());
+        
+        prog.setPosition(0.175);
+        prog.setMessage("FP Helper: Scaling Image");
+        
+        // Scale image
+        sliceArray = SequenceUtil.scale(sliceArray, (int) Math.round((double) sliceArray.getSizeX() * scaleXVar.getValue()), (int) Math.round((double) sliceArray.getSizeY() * scaleYVar.getValue()));
+        	
         // z-Scaling is very slow. But we already checked user really wants to go ahead with this.
         if (scaleZVar.getValue() < 0.999){
-        	saveMe = scaleZ(saveMe, scaleZVar.getValue());
+        	sliceArray = scaleZ(sliceArray, scaleZVar.getValue());
         }
         
-        String imageFilename = savepath + "/" + uniqueName + "-images/" + uniqueName + ".png";
+        prog.setPosition(0.25);
+        prog.setMessage("FP Helper: Composing texture atlases...");
         
-        Saver.save(saveMe, new File(imageFilename), true, true);
+        // Now we have our stack of images (sliceArray), we need to order it into 8 texture atlases
+        int sliceWidth = sliceArray.getSizeX(); int sliceHeight = sliceArray.getSizeY();
+        int numberOfImages = sliceArray.getSizeZ();
+        
+        int atlasWidth; int atlasHeight;
+        int numberOfAtlases = 8;
+        
+        int zPadding = 4;
+        int paddedSliceDepth = numberOfImages + zPadding;
+        
+        int paddedSliceWidth = ceil2(sliceWidth);
+        int paddedSliceHeight = ceil2(sliceHeight);
+        
+        int xOffset = (int)Math.floor((paddedSliceWidth - sliceWidth)/2);
+        int yOffset = (int)Math.floor((paddedSliceHeight - sliceHeight)/2);
+        
+        int slicesPerAtlas = (int)Math.ceil((float)paddedSliceDepth/(float)numberOfAtlases);
+        atlasWidth = ceil2(paddedSliceWidth);
+        atlasHeight = ceil2(paddedSliceHeight * slicesPerAtlas);
+        while ((atlasHeight > 2*atlasWidth) && (atlasHeight > sliceHeight)){
+        	  atlasHeight /= 2;
+        	  atlasWidth *= 2;
+        }
+        
+        BufferedImage[] atlasArray = new BufferedImage[8];
+
+        for (int i=0; i<numberOfAtlases; i++){
+        	atlasArray[i] = new BufferedImage(atlasWidth, atlasHeight, BufferedImage.TYPE_INT_ARGB);
+        }
+        
+        // Make LUT and set alpha properly
+        LUT argbLUT = sliceArray.createCompatibleLUT();
+        argbLUT.setAlphaToLinear(); 
+        
+        Scaler[] scalers = argbLUT.getScalers();
+        
+        double maxRightIn = 0;
+        for (int i = 0; i<3; i++){
+        	double thisRightIn = scalers[i].getRightIn();
+        	if (thisRightIn > maxRightIn)
+        		maxRightIn = thisRightIn;
+        }
+        
+        scalers[3].setRightIn(maxRightIn);
+        argbLUT.getLutChannel(3).setScaler(scalers[3]);
+        
+        // Put each slice into its correct place in the atlas
+        int slicesPerRow = (int)Math.floor((float)atlasWidth/(float)paddedSliceWidth);
+        for (int i=0; i<numberOfImages; i++){
+        	int j = i + (int)Math.floor((float)zPadding/2.0);
+        	int atlasNumber = (int)((float)j % (float)numberOfAtlases);
+        	int locationIndex = (int)Math.floor((float)j/(float)numberOfAtlases);
+        	
+        	BufferedImage sliceTexture = IcyBufferedImageUtil.getARGBImage(sliceArray.getImage(0, i), argbLUT);
+        	
+        	int xStartPixel = (int)((float)locationIndex % (float)slicesPerRow) * paddedSliceWidth + xOffset;
+        	int yStartPixel = (int)Math.floor((float)locationIndex / (float)slicesPerRow) * paddedSliceHeight;
+        	yStartPixel = atlasHeight - yStartPixel - paddedSliceHeight + yOffset;
+        	
+        	copySubImage(sliceTexture, atlasArray[atlasNumber], xStartPixel, yStartPixel);
+        }
+                
+        Sequence atlasSequence = new Sequence("Atlas Array");
+        for (int i=0; i<numberOfAtlases; i++){
+        	atlasSequence.addImage(atlasArray[i]);
+        }
+        
+        // Save the atlases
+        prog.setMessage("FP Helper: Saving images...");
+        prog.setPosition(1.0/2.0);
+        String imageFilename = savepath + "/" + uniqueName + ".png";
+        // Save the images! 
+        Saver.save(atlasSequence, new File(imageFilename), true, true);
+        
         
         // And now just make the webpage! 
         String pathTohtmlFile = "/templateWebpage.html";
-        int numLines = 46; // Not great practice to hard-code this! 
+        int numLines = 56; // TODO: Not great practice to hard-code this! 
         String[] webpageAsString = new String[numLines];
         
         try {
@@ -259,33 +315,28 @@ public class FpBioimageHelper extends EzPlug {
         
         // Get canonical filenames for relative paths
         try {
-        	fppath = new File(fppath).getCanonicalPath();
         	savepath = new File(savepath).getCanonicalPath();
     	} catch (IOException e2) {
 			e2.printStackTrace();
 		}
-        
-        Path savepathPath = Paths.get(savepath);
-        Path imageSavepathPath = Paths.get(savepath + "/" + uniqueName + "-images");
-        Path fppathPath = Paths.get(fppath);
-        
-        String relativePathToFPBioimage = savepathPath.relativize(fppathPath).toString().replace('\\', '/');
-        String relativePathToImages = savepathPath.relativize(imageSavepathPath).toString().replace('\\', '/');
+              
+        String relativePathToImages = "."; // Since they're in the same folder now.
         
         for (int i = 0; i<numLines; i++){
         	webpageAsString[i] = webpageAsString[i].replace("templateTitle", uniqueName + " - FPBioimage Viewer");
         	webpageAsString[i] = webpageAsString[i].replace("templateImagePath", relativePathToImages);
         	webpageAsString[i] = webpageAsString[i].replace("templateUniqueName", uniqueName);
-        	webpageAsString[i] = webpageAsString[i].replace("templateNumberOfImages", Integer.toString(saveMe.getSizeZ()));
+        	webpageAsString[i] = webpageAsString[i].replace("templateNumberOfImages", Integer.toString(numberOfImages));
         	webpageAsString[i] = webpageAsString[i].replace("templateImagePrefix", uniqueName + "_z");
         	webpageAsString[i] = webpageAsString[i].replace("templateNumberingFormat", "0000");
         	webpageAsString[i] = webpageAsString[i].replace("templateVoxelX", Double.toString((voxelSizeXVar.getValue()/scaleXVar.getValue())));
         	webpageAsString[i] = webpageAsString[i].replace("templateVoxelY", Double.toString((voxelSizeYVar.getValue()/scaleYVar.getValue())));
         	webpageAsString[i] = webpageAsString[i].replace("templateVoxelZ", Double.toString((voxelSizeZVar.getValue()/scaleZVar.getValue())));
-        	webpageAsString[i] = webpageAsString[i].replace("templatePathToFPBioimage", relativePathToFPBioimage);
+        	webpageAsString[i] = webpageAsString[i].replace("templateSliceWidth", Integer.toString(sliceWidth));
+        	webpageAsString[i] = webpageAsString[i].replace("templateSliceHeight", Integer.toString(sliceHeight));
         }
 		
-        String htmlSavePath =  savepath + "/" + uniqueName + ".html";
+        String htmlSavePath =  savepath + "/index.html";
         
         // Finally, write the updated webpage to the save location
         try {
@@ -295,52 +346,172 @@ public class FpBioimageHelper extends EzPlug {
 			e.printStackTrace();
 		}
         
-        
-        // Do you want to open the webpage now?
-        
-    	Boolean dlg = ConfirmDialog.confirm("Complete!", "Would you like to view the webpage now?", ConfirmDialog.YES_NO_OPTION);
-    	if (dlg){
-    		if (SystemUtils.IS_OS_WINDOWS){
-    			String runMe = "\"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe\" --allow-file-access-from-files \"" + htmlSavePath + "\"";
-    			Runtime rt = Runtime.getRuntime();
-    			try {
-					Process pr = rt.exec(runMe);
-				} catch (IOException e) {
-					// TODO Auto-generated catch block
+        if (uploadToAWSVar.getValue()){
+        	prog.setPosition(3.0/4.0);
+            prog.setMessage("FP Helper: Uploading to FP Host...");
+            
+        	// Start up S3Service
+        	S3Service s3Service = Bucket.getS3Service();
+        	
+            // Check that files don't already exist
+            String keyPrefix = uniqueName;
+            boolean confirmUpload = true;
+            boolean fileAlreadyExists = true;
+            
+            try {
+				fileAlreadyExists = s3Service.isObjectInBucket(bucketName, keyPrefix + "/index.html");
+			} catch (ServiceException e2) {
+				e2.printStackTrace();
+			}
+            
+            while (fileAlreadyExists){
+            	// Check when file was uploaded
+            	S3Object existingObject = null;
+				try {
+					existingObject = s3Service.getObject(bucketName, keyPrefix + "/index.html");
+				} catch (S3ServiceException e) {
 					e.printStackTrace();
 				}
-    		} else if (SystemUtils.IS_OS_MAC){
-    			String runMe = "open \"/Applications/Google Chrome.app\" --allow-file-access-from-files \"" + htmlSavePath + "\"";
-    			Runtime rt = Runtime.getRuntime();
-    			try {
-					Process pr = rt.exec(runMe); // should check return value
-				} catch (IOException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
-    		}
-    		
-    	}
+            	Date lastModified = existingObject.getLastModifiedDate();
+            	
+            	Instant then = lastModified.toInstant();
+            	Instant now = Instant.now();
+            	Instant twentyFourHoursAgo = now.minus(24, ChronoUnit.HOURS);
+            	Boolean within24Hours = ( ! then.isBefore( twentyFourHoursAgo ) ) &&  then.isBefore( now ) ;
+
+            	if (within24Hours){
+            		// Ask if we want to overwrite, otherwise rename
+            		String msgStr = "File already exists, but is less than 24 hours old. Do you want to overwrite? (Press No to rename then upload.)";
+            		//int overwrite = ConfirmDialog.confirmEx("File exists!", msgStr, ConfirmDialog.YES_NO_CANCEL_OPTION);
+            		int overwrite = JOptionPane.showConfirmDialog(null, msgStr, "File exists!", JOptionPane.YES_NO_CANCEL_OPTION);
+            		if (overwrite == 2){
+            			confirmUpload = false; fileAlreadyExists = false; // To get out the loop
+            		} else if (overwrite == 0){
+            			// User wants to overwrite 
+            			fileAlreadyExists = false; // Just to get out the loop
+            		} else if (overwrite == 1){
+            			String newPrefix = JOptionPane.showInputDialog("New unique name:");
+            			if (newPrefix != null){
+            				// Check if this new name exists
+            				keyPrefix = validateName(newPrefix);
+            				try {
+            					fileAlreadyExists = s3Service.isObjectInBucket(bucketName, keyPrefix + "/index.html");
+            				} catch (ServiceException e2) {
+            					e2.printStackTrace();
+            				}
+            			} else {
+            				// User cancelled
+            				confirmUpload = false; // Won't upload anything
+            				fileAlreadyExists = false; // To get out the loop
+            			}
+            		}
+            		
+            	} else {
+            		// Can't overwrite, sorry. You can rename?
+            		String newPrefix = JOptionPane.showInputDialog("File already exists, and is over 24 hours old so can't be overwritten. Either rename, or cancel:");
+            		if (newPrefix != null){
+        				keyPrefix = validateName(newPrefix);
+        	            try {
+        					fileAlreadyExists = s3Service.isObjectInBucket(bucketName, keyPrefix + "/index.html");
+        				} catch (ServiceException e2) {
+        					e2.printStackTrace();
+        				}
+        			} else {
+        				// User cancelled
+        				confirmUpload = false; // Don't upload anything
+        				fileAlreadyExists = false; // To get out the loop
+        			}
+            	}
+
+            }
+
+            if (confirmUpload){
+            	// Set up list of all files to upload
+	            String[] filelist = new String[9];
+	            String[] keylist = new String[9];         
+	            
+	            filelist[8] = htmlSavePath;
+	            keylist[8] = keyPrefix + "/index.html";
+	            
+	            for (int i=0; i<8; i++){
+	            	filelist[i] = savepath + "/" + uniqueName + "_z" + String.format("%04d", i) + ".png";
+	            	keylist[i] = keyPrefix + "/" + uniqueName + "_z" + String.format("%04d", i) + ".png";
+	            }
+	            
+	            // Upload files
+	            for (int i=0; i<filelist.length; i++){
+	            	File file = new File(filelist[i]);
+					try {
+						S3Object uploadThis = new S3Object(file);
+	            		uploadThis.setKey(keylist[i]);
+	            		uploadThis.addMetadata("Content-Type", "text/html");
+	            		uploadThis.setAcl(AccessControlList.REST_CANNED_PUBLIC_READ);
+	            		s3Service.putObject(bucketName, uploadThis);
+					} catch (NoSuchAlgorithmException | IOException e) {
+						e.printStackTrace();
+					} catch (S3ServiceException e) {
+						e.printStackTrace();
+					}
+            		
+	            }
+	            
+	            int showWebDlg = JOptionPane.showConfirmDialog(null, "Would you like to view the webpage now?", "Upload complete!", JOptionPane.YES_NO_OPTION);
+	            Boolean showWeb = showWebDlg == 1 ? true : false;
+	            // Show webpage in default browser
+	            if (showWeb){ 
+	            	try {
+						java.awt.Desktop.getDesktop().browse(new URI("http://s3.amazonaws.com/fpbhost/" + keyPrefix + "/index.html"));
+					} catch (IOException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					} catch (URISyntaxException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+	            }
+            } else {
+            	JOptionPane.showConfirmDialog(null,	"Data saved locally to " + htmlSavePath, "Complete!", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE);
+            } // End of confirmUpload if
+        } else {
+        	JOptionPane.showConfirmDialog(null,"Data saved locally to " + htmlSavePath, "Complete!", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE);
+        } // End of doUpload if
         
-	}
+        prog.close();
+	} // End of FpBioimageHelper class
 	
 	@Override
 	public void clean() {
 		// TODO Auto-generated by Icy4Eclipse
 	}
 	
+	private String validateName(String inputName){
+		Pattern special = Pattern.compile ("[!@#£$%&*()+=|<>?{}\\[\\]~.,\\s]");
+		boolean hasSpecial = special.matcher(inputName).find();
+		if (inputName.length() < 4) 
+			{hasSpecial = true;}
+		
+		if (!hasSpecial){
+			return inputName;
+		} else {
+			String newName = null;
+			while (hasSpecial){
+        		newName = JOptionPane.showInputDialog("Unique name can't contain spaces or special characters, with minimum length 3. Please choose a valid unique name:");
+				if (newName==null || newName.length()<4 || newName == ""){
+					hasSpecial = true;
+				} else {
+					hasSpecial = special.matcher(newName).find();
+				}
+			}
+			return newName;
+		}
+		
+	}
 	
-	  /**
-     * Export a resource embedded into a Jar file to the local file path.
-     *
-     * @param resourceName ie.: "/SmartLibrary.dll"
-     * @return The path to the exported resource
-     * @throws Exception
-     */
     static public String ExportResource(String resourceName, String outputName) throws Exception {
-        InputStream stream = null;
+        // Copy a file from inside the jar to outside
+    	InputStream stream = null;
         OutputStream resStreamOut = null;
-        //String jarFolder;
+
         try {
             stream = FpBioimageHelper.class.getResourceAsStream(resourceName);//note that each / is a directory down in the "jar tree" been the jar the root of the tree
             if(stream == null) {
@@ -350,7 +521,6 @@ public class FpBioimageHelper extends EzPlug {
 
             int readBytes;
             byte[] buffer = new byte[4096];
-            //jarFolder = new File(FpBioimageHelper.class.getProtectionDomain().getCodeSource().getLocation().toURI().getPath()).getParentFile().getPath().replace('\\', '/');
             resStreamOut = new FileOutputStream(outputName);
             while ((readBytes = stream.read(buffer)) > 0) {
                 resStreamOut.write(buffer, 0, readBytes);
@@ -364,9 +534,24 @@ public class FpBioimageHelper extends EzPlug {
 
         return outputName;
     }
+    
+    private static void copySubImage(final BufferedImage src,
+            final BufferedImage dst, final int dx, final int dy) {
+        int[] srcbuf = ((DataBufferInt) src.getRaster().getDataBuffer()).getData();
+        int[] dstbuf = ((DataBufferInt) dst.getRaster().getDataBuffer()).getData();
+        int width = src.getWidth();
+        int height = src.getHeight();
+        int dstoffs = dx + dy * dst.getWidth();
+        int srcoffs = 0;
+        for (int y = 0 ; y < height ; y++ , dstoffs+= dst.getWidth(), srcoffs += width ) {
+            System.arraycopy(srcbuf, srcoffs , dstbuf, dstoffs, width);
+        }
+    }
 	
     public String DirectoryChooser(String icyprefname, String dialogTitle){
-        String defaultPath = getPreferencesRoot().get(icyprefname, null);
+        // Icy seems to have no built-in directory chooser.
+    	// Use this to choose a directory to save image data to
+    	String defaultPath = getPreferencesRoot().get(icyprefname, null);
         JFileChooser chooser = new JFileChooser();
         if (defaultPath != null){
         	chooser.setCurrentDirectory(new java.io.File(defaultPath));
@@ -388,10 +573,16 @@ public class FpBioimageHelper extends EzPlug {
     	return DirectoryChooser(icyprefname, "Chooser folder...");
     }
     
+    public int ceil2(int x){
+    	// Round an int up to the next power of 2
+    	double log = Math.log(x) / Math.log(2);
+    	double roundLog = Math.ceil(log);
+    	int powerOfTwo = (int)Math.pow(2, roundLog);
+    	return powerOfTwo;
+    }
+    
     public String[] readFileToString(String pathToFile, int numLines) throws IOException {
-    	//FileReader fr = new FileReader(pathToFile);
-    	//BufferedReader textReader = new BufferedReader(fr);
-    	
+    	//Reads an input file to a string array   	
     	InputStream fr = getClass().getResourceAsStream(pathToFile);
     	BufferedReader textReader = new BufferedReader(new InputStreamReader(fr));
         	
@@ -406,6 +597,7 @@ public class FpBioimageHelper extends EzPlug {
     }
     
     public static void writeStringToFile(String filename, String[] stringToWrite) throws IOException{
+    	// Simply writes string to specified filename
     	BufferedWriter outputWriter = null;
     	outputWriter = new BufferedWriter(new FileWriter(filename));
     	for (int i=0; i<stringToWrite.length; i++){
@@ -418,7 +610,7 @@ public class FpBioimageHelper extends EzPlug {
     
     
     public Sequence scaleZ(Sequence seq, double scaleFactor){
-    	//Sequence output = null;
+    	//This isn't the best thing to use, it's very slow...
     	
     	// Get depths to work out interpolation factors
     	int oldDepth = seq.getSizeZ();
@@ -465,4 +657,7 @@ public class FpBioimageHelper extends EzPlug {
     	return output; 
     }
     
+	
+	
+	
 }

@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <classpath>
 	<classpathentry kind="src" path="src"/>
-	<classpathentry kind="var" path="ICY_HOME/icy.jar"/>
-	<classpathentry kind="var" path="ICY_HOME/plugins/adufour/ezplug/ezplug.jar"/>
 	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
+	<classpathentry kind="lib" path="C:/Users/carcu/Icy.app/icy.jar"/>
+	<classpathentry kind="lib" path="C:/Users/carcu/Icy.app/plugins/adufour/ezplug/EzPlug.jar"/>
+	<classpathentry kind="lib" path="lib/user/httpclient-4.5.4"/>
+	<classpathentry kind="lib" path="lib/user/httpcore-4.4.7"/>
+	<classpathentry kind="lib" path="lib/user/jets3t-0.9.4"/>
+	<classpathentry kind="lib" path="lib/user/commons-codec-1.11"/>
+	<classpathentry kind="lib" path="lib/user/xml-builder-1.0"/>
 	<classpathentry kind="output" path="bin"/>
 </classpath>
